@@ -219,6 +219,12 @@ void do_key(byte key) {
       }
       save_config();
       break;
+    case KEY_D_LOCK: // Dial lock support
+      rig.dl = !rig.dl;
+      reset_q64();
+      update_display();
+      save_config();
+      break;
   }
 
   if (need_update) {
@@ -310,8 +316,12 @@ void write_q64(byte data) {
   q64_port = q64_port | ( tmp & q64_mask); // We write the word
 }
 
-void clear_q64() {
-  q64_port = q64_port & !q64_mask;
+void reset_q64() {
+  if(rig.mem_mode || rig.dl) {
+    q64_port = q64_port | q64_mask;
+  } else {
+    q64_port = q64_port & !q64_mask;
+  }
 }
 
 void strobe_q64(byte val) {
@@ -319,7 +329,7 @@ void strobe_q64(byte val) {
 
   delayMicroseconds(10);
 
-  clear_q64();
+  reset_q64();
 }
 
 void buzzer() {
@@ -332,7 +342,7 @@ void buzzer() {
 
   delay(100);
 
-  clear_q64();
+  reset_q64();
 
 }
 
@@ -709,7 +719,6 @@ void loop() {
   }
 
   if(digitalRead(dial_clk)==LOW) { // If the dial button is emetting a pulse
-    if(rig.mem_mode) return;
     uint16_t inc = calc_inc_step();
     if(digitalRead(count_direction)==HIGH) { // If we count up
       if(rig.clar) {
@@ -729,6 +738,7 @@ void loop() {
 
   if(digitalRead(mic_up_btn) == LOW) {
     buzzer();
+    if(rig.mem_mode) return;
     uint16_t inc = calc_inc_step();
     if(rig.clar) {
       increment_clarifier(inc);
@@ -741,6 +751,7 @@ void loop() {
 
   if(digitalRead(mic_down_btn) == LOW) {
     buzzer();
+    if(rig.mem_mode) return;
     uint16_t inc = calc_inc_step();
     if(rig.clar) {
       decrement_clarifier(inc);
