@@ -709,6 +709,7 @@ void loop() {
   }
 
   if(digitalRead(dial_clk)==LOW) { // If the dial button is emetting a pulse
+    if(rig.mem_mode) return;
     uint16_t inc = calc_inc_step();
     if(digitalRead(count_direction)==HIGH) { // If we count up
       if(rig.clar) {
