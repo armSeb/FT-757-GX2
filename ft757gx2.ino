@@ -16,6 +16,8 @@
 #define q64_2 1
 #define q64_1 2
 #define q64_0 3
+#define q64_port PORTB
+#define q64_mask 14 // To access only to the PIN 1, 2, 3
 #define disp_irq 4
 #define disp_bit0 5
 #define disp_bit1 6
@@ -44,7 +46,7 @@
 
 byte disp_pins[]={disp_bit3, disp_bit2, disp_bit1, disp_bit0}; // Array of display pins
 byte data_pins[]={data_0, data_1, data_2, data_3}; // Data pins on bus
-byte q64_pins[]={q64_0, q64_1, q64_2};
+//byte q64_pins[]={q64_0, q64_1, q64_2};
 
 // Strobes values
 #define Q64_PLL2 1 // Q1 to PLL2 Q42
@@ -140,7 +142,7 @@ void do_key(byte key) {
       rig.mode++;
       if (rig.mode>5) rig.mode=0;
       set_mode(rig.mode);
-      update_pll();
+      //update_pll();
       autosave();
       break;
     case KEY_VFO_A_B:
@@ -205,14 +207,15 @@ void do_key(byte key) {
     case KEY_CLAR:
       if (rig.mem_mode || tx_mode ) break;
       if (rig.clar) {
-        rig.freq[rig.vfo] = rig.clar_freq;
+        //rig.freq[rig.vfo] = rig.clar_freq;
         rig.clar = false;
         update_display();
         update_pll();
       } else {
-        rig.clar_freq = rig.freq[rig.vfo];
+     //   rig.clar_freq = rig.freq[rig.vfo];
         rig.clar = true;
         update_display();
+        update_pll();
       }
       save_config();
       break;
@@ -300,31 +303,36 @@ void write_data(byte val) {
   }
 }
 
+void write_q64(byte data) {
+  byte tmp = 0;
+  bitWrite(tmp, 3, bitRead(data, 0)); bitWrite(tmp, 2, bitRead(data, 1)); bitWrite(tmp, 1, bitRead(data, 2)); // Reverse and position the word
+  q64_port = q64_port & !q64_mask; // We clear the q64 bits
+  q64_port = q64_port | ( tmp & q64_mask); // We write the word
+}
+
+void clear_q64() {
+  q64_port = q64_port & !q64_mask;
+}
+
 void strobe_q64(byte val) {
-  for (byte i=0; i<3; i++) {
-    byte state = bitRead(val, i);
-    digitalWrite(q64_pins[i], state);
-  }
+  write_q64(val);
 
   delayMicroseconds(10);
 
-  digitalWrite(q64_0, LOW);
-  digitalWrite(q64_1, LOW);
-  digitalWrite(q64_2, LOW);
-
+  clear_q64();
 }
 
 void buzzer() {
-  for (byte i=0; i<3; i++) {
+ /* for (byte i=0; i<3; i++) {
     byte state = bitRead(Q64_BUZZER, i);
     digitalWrite(q64_pins[i], state);
-  }
+  } */
+
+  write_q64(Q64_BUZZER);
 
   delay(100);
 
-  digitalWrite(q64_0, LOW);
-  digitalWrite(q64_1, LOW);
-  digitalWrite(q64_2, LOW);
+  clear_q64();
 
 }
 
@@ -428,11 +436,17 @@ void update_display() {
     disp_freq = memories[rig.current_mem].freq;
   } else {
     if (rig.vfo == VFO_A) {
-      disp_freq = rig.freq[VFO_A];
       display_send(1); // vfo a
     } else {
-      disp_freq = rig.freq[VFO_B];
       display_send(12); // vfo b
+    }
+  }
+
+  if (!rig.mem_mode) {
+    if (rig.clar && !tx_mode) {
+      disp_freq = rig.clar_freq;
+    } else {
+      disp_freq = rig.freq[rig.vfo];
     }
   }
   
@@ -509,7 +523,11 @@ void update_pll() {   // PLL part
   if (rig.mem_mode) {
     freq = memories[rig.current_mem].freq;
   } else {
-   freq = rig.freq[rig.vfo];
+    if (rig.clar && !tx_mode) {
+      freq = rig.clar_freq;
+    } else {
+      freq = rig.freq[rig.vfo];
+    }
   }
 
   calculate_band(freq);
@@ -562,15 +580,19 @@ uint16_t calc_inc_step() { // To be improved...
 }
 
 void increment_vfo(uint16_t inc_step) {
+  
   rig.freq[rig.vfo] += inc_step; // Increment freq
   if (rig.freq[rig.vfo] > MAX_FREQ) {
     rig.freq[rig.vfo] = MIN_FREQ;
   }
-  
+   
+  // We update the display only if necessary
   if ((rig.freq[rig.vfo]/100) != (disp_freq/100)) {
     update_display();
   }
-    
+  if(!rig.clar) {
+    rig.clar_freq = rig.freq[rig.vfo];
+  }
   update_pll();
   autosave();
 }
@@ -578,8 +600,41 @@ void increment_vfo(uint16_t inc_step) {
 void decrement_vfo(uint16_t dec_step) {
 
   rig.freq[rig.vfo] -= dec_step; //decrement freq
-  
+  if (rig.freq[rig.vfo] < MIN_FREQ) {
+    rig.freq[rig.vfo] = MAX_FREQ;
+  }
+
+  // We update the display only if necessary
   if ((rig.freq[rig.vfo]/100) != (disp_freq/100)) {
+    update_display();
+  }
+  if(!rig.clar) {
+    rig.clar_freq = rig.freq[rig.vfo];
+  }    
+  update_pll();
+  autosave();
+}
+
+void increment_clarifier(uint16_t inc_step) {
+    rig.clar_freq += inc_step; // Increment freq
+  if (rig.clar_freq > MAX_FREQ) {
+    rig.clar_freq = MIN_FREQ;
+  }
+  
+  if ((rig.clar_freq/100) != (disp_freq/100)) {
+    update_display();
+  }
+  
+  update_pll();
+  autosave();
+}
+
+void decrement_clarifier(uint16_t dec_step) {
+  rig.clar_freq -= dec_step; //decrement freq
+  if (rig.clar_freq < MIN_FREQ) {
+    rig.clar_freq = MAX_FREQ;
+  }
+  if ((rig.clar_freq/100) != (disp_freq/100)) {
     update_display();
   }
     
@@ -634,7 +689,6 @@ void setup() {
   update_pll(); // To apply the reference setting
   set_band(rig.band);
   set_mode(rig.mode); // Set the mode
-  update_pll();
 }
 
 void loop() {
@@ -657,19 +711,29 @@ void loop() {
   if(digitalRead(dial_clk)==LOW) { // If the dial button is emetting a pulse
     uint16_t inc = calc_inc_step();
     if(digitalRead(count_direction)==HIGH) { // If we count up
-      increment_vfo(inc);
+      if(rig.clar) {
+        increment_clarifier(inc);
+      } else {
+        increment_vfo(inc);
+      }
     } else {
-      decrement_vfo(inc);
+      if(rig.clar) {
+        decrement_clarifier(inc);
+      } else {
+        decrement_vfo(inc);
+      }
     }
 
-    
-  //  while (digitalRead(dial_clk)==LOW); //Wait for pulse end
   }
 
   if(digitalRead(mic_up_btn) == LOW) {
     buzzer();
     uint16_t inc = calc_inc_step();
-    increment_vfo(inc);
+    if(rig.clar) {
+      increment_clarifier(inc);
+    } else {
+      increment_vfo(inc);
+    }
     delay(50);
     while (digitalRead(mic_up_btn) == LOW);
   }
@@ -677,7 +741,11 @@ void loop() {
   if(digitalRead(mic_down_btn) == LOW) {
     buzzer();
     uint16_t inc = calc_inc_step();
-    decrement_vfo(inc);
+    if(rig.clar) {
+      decrement_clarifier(inc);
+    } else {
+      decrement_vfo(inc);
+    }
     delay(50);
     while (digitalRead(mic_up_btn) == LOW);
   }
@@ -691,22 +759,25 @@ void loop() {
   if(digitalRead(ptt_in) == LOW && tx_mode == false) {
     tx_mode = true;
     if(!rig.mem_mode && rig.clar) {
-      uint32_t tmp = rig.freq[rig.vfo];
-      rig.freq[rig.vfo] = rig.clar_freq;
-      rig.clar_freq = tmp;
-      update_display();
-      update_pll();
+ //     uint32_t tmp = rig.freq[rig.vfo];
+ //     rig.freq[rig.vfo] = rig.clar_freq;
+ //     rig.clar_freq = tmp;
+
+        update_pll();
+        update_display();
+      
     }
   }
 
   if(digitalRead(ptt_in) == HIGH && tx_mode == true) {
     tx_mode = false;
     if(!rig.mem_mode && rig.clar) {
-      uint32_t tmp = rig.freq[rig.vfo];
-      rig.freq[rig.vfo] = rig.clar_freq;
-      rig.clar_freq = tmp;
-      update_display();
+  //    uint32_t tmp = rig.freq[rig.vfo];
+  //    rig.freq[rig.vfo] = rig.clar_freq;
+  //    rig.clar_freq = tmp;
       update_pll();
+      update_display();
+      
     }
   }
 
