@@ -198,6 +198,8 @@ void write_data(byte val) {
 
 void do_key(byte key) {
   bool need_update = false;
+  uint32_t t_freq;
+  uint8_t t_mode;
   buzzer();
   switch (key) {
     case KEY_MODE:
@@ -214,6 +216,15 @@ void do_key(byte key) {
       break;
     case KEY_MR_VFO:
       rig.mem_mode = !rig.mem_mode;
+      need_update = true;
+      break;
+    case KEY_VFO_M: // current mem & current vfo contents exchange
+      t_freq = memories[rig.current_mem].freq;
+      t_mode = memories[rig.current_mem].mode;
+      memories[rig.current_mem].freq = rig.freq[rig.vfo];
+      memories[rig.current_mem].mode = rig.mode;
+      rig.freq[rig.vfo] = t_freq;
+      rig.mode = t_mode;
       need_update = true;
       break;
     case KEY_UP:
@@ -288,6 +299,13 @@ void do_key(byte key) {
       reset_q64();
       update_display();
       save_config();
+      break;
+    case KEY_SPLIT:
+      if(!rig.mem_mode && !tx_mode) {
+        rig.split = !rig.split;
+        update_display();
+        save_config();
+      }
       break;
   }
 
@@ -808,26 +826,27 @@ void loop() {
 
   if(digitalRead(ptt_in) == LOW && tx_mode == false) {
     tx_mode = true;
-    if(!rig.mem_mode && rig.clar) {
- //     uint32_t tmp = rig.freq[rig.vfo];
- //     rig.freq[rig.vfo] = rig.clar_freq;
- //     rig.clar_freq = tmp;
-
-        update_pll();
-        update_display();
-      
+    if(!rig.mem_mode) {
+      if (rig.split) {
+        rig.vfo = !rig.vfo;
+      }
+      if (rig.clar || rig.split) {
+          update_pll();
+          update_display();
+      }
     }
   }
 
   if(digitalRead(ptt_in) == HIGH && tx_mode == true) {
     tx_mode = false;
-    if(!rig.mem_mode && rig.clar) {
-  //    uint32_t tmp = rig.freq[rig.vfo];
-  //    rig.freq[rig.vfo] = rig.clar_freq;
-  //    rig.clar_freq = tmp;
-      update_pll();
-      update_display();
-      
+    if(!rig.mem_mode) {
+      if (rig.split) {
+        rig.vfo = !rig.vfo;
+      }
+      if (rig.clar || rig.split ) {
+        update_pll();
+        update_display();
+      }
     }
   }
 
