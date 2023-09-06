@@ -11,6 +11,7 @@
 */
 
 #include <EEPROM.h>
+#include <avr/wdt.h>
 
 #define dial_clk_div 0
 #define q64_2 1
@@ -23,6 +24,8 @@
 #define disp_bit1 6
 #define disp_bit2 7
 #define disp_bit3 10
+#define disp_port PORTB
+#define disp_mask 224 // PB5 PB6 PB7
 #define disp_PB0 11
 #define disp_PB1 12
 #define disp_PB2 13
@@ -39,6 +42,8 @@
 #define data_2 31
 #define data_1 30
 #define data_0 29
+#define data_port PORTA
+#define data_mask 224 // Bits 5/6/7
 #define pll_data 28
 #define pll_clk 27
 #define agc_comp 26
@@ -133,6 +138,64 @@ void pin_setup() {
 
 }
 
+void reboot() {
+  wdt_enable(WDTO_15MS); // activer le watchdog
+  while (1) {};          // et attendre ...
+}
+
+// Hardware related functions
+
+void write_q64(byte data) {
+  byte tmp = 0;
+  bitWrite(tmp, 3, bitRead(data, 0)); bitWrite(tmp, 2, bitRead(data, 1)); bitWrite(tmp, 1, bitRead(data, 2)); // Reverse and position the word
+  q64_port = q64_port & !q64_mask; // We clear the q64 bits
+  q64_port = q64_port | ( tmp & q64_mask); // We write the word
+}
+
+void reset_q64() {
+  if(rig.mem_mode || rig.dl) {
+    q64_port = q64_port | q64_mask;
+  } else {
+    q64_port = q64_port & !q64_mask;
+  }
+}
+
+void clear_disp_bits() {
+    disp_port = disp_port & !disp_mask;
+    digitalWrite(disp_bit3, LOW);
+}
+
+void display_send(byte val) {
+  clear_disp_bits();
+
+  byte tmp = 0;
+  bitWrite(tmp, 5, bitRead(val,3));
+  bitWrite(tmp, 6, bitRead(val,2));
+  bitWrite(tmp, 7, bitRead(val,1));
+
+  disp_port = disp_port | tmp;
+  digitalWrite(disp_bit3, bitRead(val, 0));
+
+  digitalWrite(disp_irq, HIGH);
+  delayMicroseconds(50);
+  digitalWrite(disp_irq, LOW);
+  delay(1);
+
+  clear_disp_bits();
+}
+
+void write_data(byte val) {
+  byte tmp = 0;
+  bitWrite(tmp, 5, bitRead(val,0));
+  bitWrite(tmp, 6, bitRead(val,1));
+  bitWrite(tmp, 7, bitRead(val,2));
+
+  data_port = data_port & !data_mask;
+  data_port = data_port | tmp;
+  digitalWrite(data_3, bitRead(val, 3));
+}
+
+
 void do_key(byte key) {
   bool need_update = false;
   buzzer();
@@ -201,6 +264,7 @@ void do_key(byte key) {
       break;
     case KEY_M_TO_VFO:
       rig.freq[rig.vfo] = memories[rig.current_mem].freq;
+      rig.clar_freq = memories[rig.current_mem].freq;
       rig.mode = memories[rig.current_mem].mode;
       if(!rig.mem_mode) need_update = true;
       break;
@@ -302,27 +366,7 @@ void key_scan(){
 }
 
 
-void write_data(byte val) {
-    for (byte i=0; i<4; i++) {
-    byte state = bitRead(val, i);
-    digitalWrite(data_pins[i], state);
-  }
-}
 
-void write_q64(byte data) {
-  byte tmp = 0;
-  bitWrite(tmp, 3, bitRead(data, 0)); bitWrite(tmp, 2, bitRead(data, 1)); bitWrite(tmp, 1, bitRead(data, 2)); // Reverse and position the word
-  q64_port = q64_port & !q64_mask; // We clear the q64 bits
-  q64_port = q64_port | ( tmp & q64_mask); // We write the word
-}
-
-void reset_q64() {
-  if(rig.mem_mode || rig.dl) {
-    q64_port = q64_port | q64_mask;
-  } else {
-    q64_port = q64_port & !q64_mask;
-  }
-}
 
 void strobe_q64(byte val) {
   write_q64(val);
@@ -410,27 +454,7 @@ void set_10hz(uint8_t x) {
  * 
   */
  
-void clear_disp_bits() {
-    for (byte i=0; i<4; i++) {
-       digitalWrite(disp_pins[i], LOW);
-    }
-}
 
-void display_send(byte val) {
-  clear_disp_bits();
-
-  for (byte i=0; i<4; i++) {
-    byte state = bitRead(val, i);
-    digitalWrite(disp_pins[i], state);
-  }
-
-  digitalWrite(disp_irq, HIGH);
-  delayMicroseconds(50);
-  digitalWrite(disp_irq, LOW);
-  delayMicroseconds(500);
-
-  clear_disp_bits();
-}
 
 void update_display() {
 
@@ -704,13 +728,27 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 
-  if(digitalRead(hg_btn) == LOW && !rig.mem_mode) {
-    buzzer();
-    rig.gen = !rig.gen;
-    update_display();
-    save_config();
-    delay(100);
-    while(digitalRead(hg_btn) == LOW);
+  if(digitalRead(hg_btn) == LOW) {
+    if (!rig.mem_mode) {
+      buzzer();
+      rig.gen = !rig.gen;
+      update_display();
+      save_config();
+      delay(100);
+      while(digitalRead(hg_btn) == LOW);
+    } else {
+      uint32_t tmp = millis();
+      while (digitalRead(hg_btn) == LOW) { // Wait for button release
+        if ((millis() - tmp) > 3000) { // If this is a long push, reboot
+          buzzer();
+          delay(3000);
+          reboot();
+        } else { // Short push
+          // Do Nothing at this time, reserve for future func ?
+        }
+      }
+    }
+    
   }
 
   if(digitalRead(disp_PB2)==HIGH) { // Display sends a pulse to do keyscan
@@ -733,7 +771,7 @@ void loop() {
         decrement_vfo(inc);
       }
     }
-
+    while(!digitalRead(dial_clk));
   }
 
   if(digitalRead(mic_up_btn) == LOW) {
